@@ -1,0 +1,69 @@
+
+> mcp-expert@0.1.0 start
+> node dist/index.js
+
+Loaded 3 topic configurations
+Starting MCP Expert Server...
+MCP Expert Server running on stdio
+Loaded 3 topic configurations from /Users/paulbettner/Projects/smarty-pants/src/configs/query
+Available topics: vercel, rive, n8n
+{"result":{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"mcp-expert","version":"0.1.0"}},"jsonrpc":"2.0","id":0}
+Handling tool call: list_tools {}
+{"result":{"content":[{"type":"text","text":"{\n  \"error\": \"Unknown tool: list_tools\",\n  \"errorType\": \"InternalServerError\"\n}"}],"isError":true},"jsonrpc":"2.0","id":1}
+Error executing tool list_tools: Error: Unknown tool: list_tools
+    at file:///Users/paulbettner/Projects/smarty-pants/packages/mcp/mcp-expert/dist/index.js:246:19
+    at file:///Users/paulbettner/Projects/smarty-pants/packages/mcp/mcp-expert/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:314:79
+    at file:///Users/paulbettner/Projects/smarty-pants/packages/mcp/mcp-expert/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js:138:25
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+
+> mcp-expert@0.1.0 start
+> node dist/index.js
+
+Loaded 3 topic configurations
+Starting MCP Expert Server...
+MCP Expert Server running on stdio
+Loaded 3 topic configurations from /Users/paulbettner/Projects/smarty-pants/src/configs/query
+Available topics: vercel, rive, n8n
+
+> mcp-expert@0.1.0 start
+> node dist/index.js
+
+Loaded 3 topic configurations
+Starting MCP Expert Server...
+MCP Expert Server running on stdio
+Loaded 3 topic configurations from /Users/paulbettner/Projects/smarty-pants/src/configs/query
+Available topics: vercel, rive, n8n
+
+> mcp-expert@0.1.0 start
+> node dist/index.js
+
+Loaded 3 topic configurations
+Starting MCP Expert Server...
+MCP Expert Server running on stdio
+Loaded 3 topic configurations from /Users/paulbettner/Projects/smarty-pants/src/configs/query
+Available topics: vercel, rive, n8n
+
+> mcp-expert@0.1.0 start
+> node dist/index.js
+
+Loaded 3 topic configurations
+Starting MCP Expert Server...
+MCP Expert Server running on stdio
+Loaded 3 topic configurations from /Users/paulbettner/Projects/smarty-pants/src/configs/query
+Available topics: vercel, rive, n8n
+
+> mcp-expert@0.1.0 start
+> node dist/index.js
+
+Starting MCP Expert Server (minimal test version)...
+Transport created, connecting...
+MCP Expert Server running on stdio
+
+> mcp-expert@0.1.0 start
+> node dist/index.js
+
+Loaded 3 topic configurations
+Starting MCP Expert Server...
+MCP Expert Server running on stdio
+Loaded 3 topic configurations from /Users/paulbettner/Projects/smarty-pants/src/configs/query
+Available topics: vercel, rive, n8n
