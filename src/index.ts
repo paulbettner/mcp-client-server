@@ -8,7 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { deployServer, listServers, getServerLogs, stopServer } from './operations/docker.js';
-import { callTool, runTests } from './operations/mcp-client.js';
+import { callTool, runTests, clearClientCache } from './operations/mcp-client.js';
 
 import {
   DeployServerSchema,
@@ -166,6 +166,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ['server_name']
         }
+      },
+      {
+        name: 'mcp_test_clear_connections',
+        description: 'Clear all cached client connections to ensure clean state',
+        inputSchema: {
+          type: 'object',
+          properties: {}
+        }
       }
     ]
   };
@@ -217,6 +225,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'mcp_test_stop_server': {
         const input = ServerOperationSchema.parse(args);
         result = await stopServer(input);
+        break;
+      }
+      
+      case 'mcp_test_clear_connections': {
+        clearClientCache();
+        result = { success: true, message: "All client connections cleared" };
         break;
       }
       
