@@ -12,3 +12,6 @@ wheels/
 # Node-generated files
 dist/
 node_modules/
+# Ignore log files
+logs/
+.DS_Store
