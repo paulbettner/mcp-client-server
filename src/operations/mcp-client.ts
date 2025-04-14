@@ -16,35 +16,121 @@ import { getServerProcess } from './docker.js';
 // Cache of connected clients by server name
 const connectedClients = new Map<string, Client>();
 
+// Export a function to remove a client from the cache
+export function removeClientFromCache(serverName: string): void {
+  if (connectedClients.has(serverName)) {
+    const client = connectedClients.get(serverName);
+    Logger.info(`Removing client for server '${serverName}' from cache`);
+    
+    try {
+      // Attempt to close the client connection
+      if (client && client.transport) {
+        client.transport.close().catch(err => {
+          Logger.warn(`Error closing transport for client ${serverName}:`, err);
+        });
+      }
+    } catch (error) {
+      Logger.warn(`Error during client cleanup for ${serverName}:`, error);
+    } finally {
+      // Remove from cache regardless of close success
+      connectedClients.delete(serverName);
+      Logger.debug(`Successfully removed client for server '${serverName}' from cache`);
+    }
+  } else {
+    Logger.debug(`No cached client found for server '${serverName}'`);
+  }
+}
+
+// Clear all cached clients - useful for complete reset
+export function clearClientCache(): void {
+  const clientCount = connectedClients.size;
+  if (clientCount === 0) {
+    Logger.info(`No cached clients to clear`);
+    return;
+  }
+  
+  Logger.info(`Clearing client cache (${clientCount} clients)`);
+  
+  // Close and clean up each client
+  const serverNames = Array.from(connectedClients.keys());
+  for (const serverName of serverNames) {
+    removeClientFromCache(serverName);
+  }
+  
+  // Verify all clients were removed
+  if (connectedClients.size > 0) {
+    Logger.warn(`Failed to clear all clients. ${connectedClients.size} clients remain.`);
+    // Force clear the cache as a last resort
+    connectedClients.clear();
+  }
+  
+  Logger.info(`Client cache successfully cleared (was ${clientCount} clients)`);
+}
+
 // Create a custom Transport implementation for process communication
 class ProcessTransport implements Transport {
   private messageBuffer = '';
+  private isConnected = false;
+  private exitHandler: any;
   
   constructor(private server: ReturnType<typeof getServerProcess>) {}
   
   async start(): Promise<void> {
-    // Set up data handler for stdout
-    this.server.stdout.on('data', (data: Buffer) => {
-      this.handleData(data.toString());
-    });
-    
-    // Handle process exit
-    this.server.process.on('exit', (code) => {
-      Logger.warn(`Server process exited with code ${code}`);
-      if (this.onclose) {
-        this.onclose();
+    try {
+      // Check if the server process is still running
+      if (!this.server.process || this.server.process.killed) {
+        throw new Error(`Server process for ${this.server.name} is not active`);
       }
-    });
-    
-    return Promise.resolve();
+      
+      // Set up data handler for stdout
+      this.server.stdout.on('data', (data: Buffer) => {
+        this.handleData(data.toString());
+      });
+      
+      // Handle process exit
+      this.exitHandler = (code: number) => {
+        this.isConnected = false;
+        Logger.warn(`Server process for ${this.server.name} exited with code ${code}`);
+        if (this.onclose) {
+          this.onclose();
+        }
+      };
+      
+      this.server.process.on('exit', this.exitHandler);
+      
+      // Also handle errors
+      this.server.process.on('error', (err) => {
+        this.isConnected = false;
+        Logger.error(`Server process error for ${this.server.name}:`, err);
+        if (this.onerror) {
+          this.onerror(err);
+        }
+      });
+      
+      this.isConnected = true;
+      return Promise.resolve();
+    } catch (error) {
+      this.isConnected = false;
+      Logger.error(`Failed to start transport for ${this.server.name}:`, error);
+      return Promise.reject(error);
+    }
   }
   
   async send(message: JSONRPCMessage): Promise<void> {
+    if (!this.isConnected || !this.server.stdin.writable) {
+      const err = new Error(`Cannot send message to ${this.server.name}: transport not connected`);
+      if (this.onerror) {
+        this.onerror(err);
+      }
+      return Promise.reject(err);
+    }
+    
     try {
       // Send message to server's stdin
       this.server.stdin.write(JSON.stringify(message) + '\n');
       return Promise.resolve();
     } catch (error) {
+      this.isConnected = false;
       if (this.onerror && error instanceof Error) {
         this.onerror(error);
       }
@@ -53,11 +139,23 @@ class ProcessTransport implements Transport {
   }
   
   async close(): Promise<void> {
-    // Try to gracefully end the process
-    this.server.process.kill();
-    
-    if (this.onclose) {
-      this.onclose();
+    try {
+      // Remove event listeners to prevent memory leaks
+      if (this.exitHandler && this.server.process) {
+        this.server.process.removeListener('exit', this.exitHandler);
+      }
+      
+      // Try to gracefully end the process, but only if this transport created it
+      if (this.server.process && !this.server.process.killed) {
+        this.server.process.kill();
+      }
+    } catch (error) {
+      Logger.warn(`Error during transport close for ${this.server.name}:`, error);
+    } finally {
+      this.isConnected = false;
+      if (this.onclose) {
+        this.onclose();
+      }
     }
     
     return Promise.resolve();
@@ -99,9 +197,69 @@ class ProcessTransport implements Transport {
 
 // Get or create a client for a server
 async function getClient(serverName: string): Promise<Client> {
+  // No need for clientCacheKey as we'll use serverName as the key
+  
   // Check if we already have a connected client
   if (connectedClients.has(serverName)) {
-    return connectedClients.get(serverName)!;
+    Logger.debug(`Found existing client for server '${serverName}'`);
+    
+    try {
+      // Get the server process to confirm it's still running
+      const serverProcess = getServerProcess(serverName);
+      
+      // Additional validation to ensure the server is still alive and responsive
+      if (!serverProcess.process || serverProcess.process.killed) {
+        throw new Error(`Server process for ${serverName} is not active`);
+      }
+      
+      // Get the cached client
+      const cachedClient = connectedClients.get(serverName)!;
+      
+      // Extra verification - check if the transport is still healthy
+      // We'll use a simple "ping" request to verify connectivity
+      Logger.debug(`Verifying connection health for client '${serverName}'...`);
+      try {
+        // Set a timeout for the health check
+        const timeoutPromise = new Promise<boolean>((_, reject) => {
+          setTimeout(() => reject(new Error('Connection health check timed out')), 1000);
+        });
+        
+        // Try to list tools quickly as a health check
+        const healthCheckPromise = cachedClient.listTools()
+          .then(() => true)
+          .catch(() => false);
+        
+        // Race the health check against the timeout
+        const isHealthy = await Promise.race([healthCheckPromise, timeoutPromise]);
+        
+        if (isHealthy) {
+          Logger.debug(`Connection to server '${serverName}' is healthy, reusing client`);
+          return cachedClient;
+        } else {
+          throw new Error('Connection health check failed');
+        }
+      } catch (unknownHealthError) {
+        // Convert to Error type
+        const healthError = unknownHealthError instanceof Error
+          ? unknownHealthError
+          : new Error(String(unknownHealthError));
+          
+        // Health check failed - server might be unresponsive even though process exists
+        Logger.warn(`Client for '${serverName}' failed health check: ${healthError.message}`);
+        removeClientFromCache(serverName);
+        // Continue with creating a new client
+      }
+    } catch (unknownError) {
+      // Convert to Error type
+      const error = unknownError instanceof Error
+        ? unknownError
+        : new Error(String(unknownError));
+      
+      // Server process no longer exists or is not running
+      Logger.warn(`Cached client exists for server '${serverName}', but server is not available: ${error.message}`);
+      removeClientFromCache(serverName);
+      // Continue with creating a new client
+    }
   }
   
   try {
@@ -119,11 +277,9 @@ async function getClient(serverName: string): Promise<Client> {
     });
     
     // Connect to the server
-    Logger.debug(`Connecting to server '${serverName}'...`);
-    // The connect method requires a transport parameter in the MCP SDK
-    // But our Client constructor already has it, so we'll pass an empty object
+    Logger.debug(`Creating new connection to server '${serverName}'...`);
     await client.connect(transport);
-    Logger.debug(`Connected to server '${serverName}'`);
+    Logger.debug(`Successfully connected to server '${serverName}'`);
     
     // Cache the client for future use
     connectedClients.set(serverName, client);

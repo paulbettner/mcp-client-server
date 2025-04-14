@@ -19,6 +19,7 @@ import {
   ServerOperationInput,
   ServerOperationResponse
 } from '../types/schemas.js';
+import { removeClientFromCache } from './mcp-client.js';
 
 // Initialize Docker client
 const docker = new Dockerode({
@@ -58,9 +59,60 @@ export async function deployServer(input: DeployServerInput): Promise<DeployServ
       throw new ServerDeploymentError(`package.json not found in ${source_path}`);
     }
     
-    // Check if server with this name already exists
+    // Always clean up any cached clients for this server name first,
+    // regardless of whether we think the server is running
+    // This ensures we don't use a stale client connection
+    removeClientFromCache(name);
+    
+    // If a server with this name already exists, we need to fully stop it first
     if (runningServers.has(name)) {
-      throw new ServerDeploymentError(`Server with name '${name}' is already running`);
+      Logger.info(`Server with name '${name}' is already running. Forcefully stopping it before redeployment.`);
+      
+      try {
+        // Get the existing server
+        const existingServer = getServerProcess(name);
+        
+        // Try graceful termination first (SIGTERM)
+        existingServer.process.kill('SIGTERM');
+        
+        // Remove from running servers map immediately to prevent any access attempts
+        runningServers.delete(name);
+        
+        // Wait for process to terminate gracefully
+        await new Promise<void>((resolve) => {
+          // Set a timeout for graceful shutdown
+          const forceKillTimeout = setTimeout(() => {
+            try {
+              // Force kill if still running (SIGKILL)
+              if (!existingServer.process.killed) {
+                Logger.warn(`Server '${name}' did not terminate gracefully, forcing kill...`);
+                existingServer.process.kill('SIGKILL');
+              }
+            } catch (forceError) {
+              Logger.warn(`Error during force kill of server '${name}':`, forceError);
+            }
+            resolve();
+          }, 1000); // Wait 1 second before force killing
+          
+          // If process exits naturally, clear timeout and resolve
+          existingServer.process.once('exit', () => {
+            clearTimeout(forceKillTimeout);
+            Logger.debug(`Server '${name}' process exited successfully`);
+            resolve();
+          });
+        });
+        
+        // Additional wait time to ensure OS resources are fully released
+        Logger.debug(`Waiting for system resources to be fully released for server '${name}'...`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        Logger.info(`Previous server '${name}' has been fully terminated.`);
+      } catch (error) {
+        Logger.warn(`Error during termination of existing server '${name}':`, error);
+        // Even if there was an error, wait a bit longer to be safe before proceeding
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        Logger.info(`Proceeding with deployment after termination attempt.`);
+      }
     }
     
     // Read package.json to determine how to run the server
@@ -271,6 +323,16 @@ export async function stopServer(input: ServerOperationInput): Promise<ServerOpe
   const { server_name } = input;
   
   try {
+    // Even if the server process doesn't exist, still clean up any cached client
+    if (!runningServers.has(server_name)) {
+      // Server might not be running, but there could be a cached client
+      removeClientFromCache(server_name);
+      return {
+        name: server_name,
+        status: 'stopped'
+      };
+    }
+    
     const server = getServerProcess(server_name);
     
     // Kill the process
@@ -279,6 +341,12 @@ export async function stopServer(input: ServerOperationInput): Promise<ServerOpe
     // Remove from running servers
     runningServers.delete(server_name);
     
+    // Clean up any cached clients for this server
+    removeClientFromCache(server_name);
+    
+    // Wait a moment for cleanup
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
     return {
       name: server_name,
       status: 'stopped'
@@ -286,8 +354,20 @@ export async function stopServer(input: ServerOperationInput): Promise<ServerOpe
   } catch (error) {
     Logger.error(`Error stopping server '${server_name}':`, error);
     
+    // Attempt to clean up cached client even if server process handling fails
+    try {
+      removeClientFromCache(server_name);
+    } catch (clientError) {
+      Logger.warn(`Error cleaning up client for ${server_name}:`, clientError);
+    }
+    
     if (error instanceof ServerNotFoundError) {
-      throw error;
+      // Return success anyway, since the goal was to stop the server
+      // and it's not running (which is the desired state)
+      return {
+        name: server_name,
+        status: 'stopped'
+      };
     }
     
     throw new Error(
