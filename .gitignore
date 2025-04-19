@@ -15,3 +15,7 @@ node_modules/
 # Ignore log files
 logs/
 .DS_Store
+
+# Test files
+test-*.js
+test-*.log
