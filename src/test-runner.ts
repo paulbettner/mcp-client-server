@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import readline from 'readline';
-import { deployServer, listServers, getServerLogs, stopServer } from './operations/docker.js';
-import { callTool, runTests } from './operations/mcp-client.js';
+import { deployServer, listServers, getServerLogs, stopServer } from './operations/docker/index.js';
+import { callTool, runTests } from './operations/client/index.js';
 import { Logger } from './common/logger.js';
 
 // Initialize logger
