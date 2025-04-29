@@ -4,6 +4,9 @@
   "description": "MCP Test Client for testing MCP servers during development",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "mcp-test-client": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
